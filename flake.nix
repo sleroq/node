@@ -23,7 +23,16 @@
 
       versionMajor = version: builtins.elemAt (builtins.match "^v([0-9]+)\\.[0-9]+\\.[0-9]+$" version) 0;
 
+      versionMinor =
+        version:
+        let
+          match = builtins.match "^v([0-9]+)\\.([0-9]+)\\.[0-9]+$" version;
+        in
+        "${builtins.elemAt match 0}_${builtins.elemAt match 1}";
+
       versionAlias = version: builtins.replaceStrings [ "." ] [ "_" ] (stripV version);
+
+      versionFromUrl = url: builtins.elemAt (builtins.match ".*node-(v[0-9]+\\.[0-9]+\\.[0-9]+)-.*" url) 0;
 
       sortVersions =
         versions: builtins.sort (a: b: builtins.compareVersions (stripV a) (stripV b) < 0) versions;
@@ -73,6 +82,41 @@
           }) majors
         );
 
+      latestMinorAliasesForSystem =
+        system:
+        let
+          versions = versionsForSystem system;
+          minors = unique (map versionMinor versions);
+          latestForMinor =
+            minor:
+            let
+              matching = builtins.filter (version: versionMinor version == minor) versions;
+            in
+            builtins.elemAt matching (builtins.length matching - 1);
+        in
+        builtins.listToAttrs (
+          map (minor: {
+            name = minor;
+            value = latestForMinor minor;
+          }) minors
+        );
+
+      ltsAliasForSystem =
+        system:
+        let
+          releaseAliases = builtins.filter (
+            name: builtins.match "^latest-[a-z]+$" name != null && builtins.hasAttr system data.${name}
+          ) (builtins.attrNames data);
+          ltsVersions = map (name: versionFromUrl data.${name}.${system}.url) releaseAliases;
+          sortedLtsVersions = sortVersions ltsVersions;
+        in
+        if sortedLtsVersions == [ ] then
+          { }
+        else
+          {
+            lts = builtins.elemAt sortedLtsVersions (builtins.length sortedLtsVersions - 1);
+          };
+
       exactAliasesForSystem =
         system:
         builtins.listToAttrs (
@@ -82,7 +126,12 @@
           }) (versionsForSystem system)
         );
 
-      aliasesForSystem = system: exactAliasesForSystem system // latestMajorAliasesForSystem system;
+      aliasesForSystem =
+        system:
+        exactAliasesForSystem system
+        // latestMinorAliasesForSystem system
+        // latestMajorAliasesForSystem system
+        // ltsAliasForSystem system;
     in
     flake-utils.lib.eachDefaultSystem (
       system:
